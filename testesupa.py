@@ -2,12 +2,12 @@ import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, db
 import uuid
-import json
+import ast
 
 # --- CONFIGURAÇÃO DO FIREBASE ---
 
 # Carrega a chave do Firebase do secrets
-firebase_key = json.loads(st.secrets["FIREBASE_KEY"])
+firebase_key = ast.literal_eval(st.secrets["FIREBASE_KEY"])
 
 # Inicializa o Firebase (somente uma vez)
 if not firebase_admin._apps:
