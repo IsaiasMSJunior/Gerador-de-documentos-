@@ -16,8 +16,7 @@ ref = db.reference('dados')
 
 # --- TÍTULO ---
 st.markdown("# 📝 CRUD com Firebase + Streamlit")
-st.markdown("Este é um exemplo de CRUD completo com visual mais bonito e organizado.")
-
+st.markdown("Gerencie seus textos de forma simples e prática usando o Firebase Realtime Database.")
 st.divider()
 
 # --- INSERIR NOVO DADO ---
@@ -36,7 +35,7 @@ with col2:
                 "texto": novo_texto
             })
             st.success("Texto inserido com sucesso!")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.warning("Digite algo para inserir.")
 
@@ -65,7 +64,7 @@ if dados:
                         "texto": novo_valor
                     })
                     st.success("Texto atualizado com sucesso!")
-                    st.experimental_rerun()
+                    st.rerun()
 
             # --- DELETAR ---
             with col2:
@@ -74,7 +73,7 @@ if dados:
                     if confirm == "Sim":
                         ref.child(id_dado).delete()
                         st.warning("Texto excluído com sucesso.")
-                        st.experimental_rerun()
+                        st.rerun()
 
             st.markdown("---")
 else:
