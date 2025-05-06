@@ -1,13 +1,10 @@
 import streamlit as st
 import firebase_admin
 from firebase_admin import credentials, db
-from google.oauth2 import id_token
-from google.auth.transport import requests
-import uuid
 import json
-import urllib.parse
+import uuid
 
-# --- CONFIGURAR FIREBASE ---
+# --- INICIALIZAR FIREBASE ---
 if not firebase_admin._apps:
     firebase_key = json.loads(st.secrets["FIREBASE_KEY"])
     cred = credentials.Certificate(firebase_key)
@@ -15,58 +12,62 @@ if not firebase_admin._apps:
         'databaseURL': st.secrets["DATABASE_URL"]
     })
 
-# --- AUTENTICAÇÃO COM GOOGLE ---
-CLIENT_ID = st.secrets["GOOGLE_CLIENT_ID"]
+usuarios_ref = db.reference('usuarios')
 
-st.title("🔐 Login com Google + CRUD no Firebase")
+st.title("🔐 Sistema de Login Simples + CRUD")
 
-# Passo 1 - Botão para iniciar login
-login_url = (
-    "https://accounts.google.com/o/oauth2/v2/auth"
-    "?response_type=token"
-    f"&client_id={CLIENT_ID}"
-    f"&redirect_uri={urllib.parse.quote(st.secrets['REDIRECT_URI'])}"
-    "&scope=email%20profile"
-)
+# --- AUTENTICAÇÃO ---
 
-if "user" not in st.session_state:
-    st.markdown("### 👤 Faça login para continuar")
-    st.markdown(f"[Clique aqui para logar com o Google]({login_url})")
+if "usuario_logado" not in st.session_state:
+    menu = st.sidebar.selectbox("Escolha uma opção", ["Login", "Cadastrar"])
 
-    # Capturar token da URL após o login
-    token = st.query_params.get("access_token", [None])[0]
+    if menu == "Cadastrar":
+        st.subheader("📌 Cadastro de Usuário")
+        novo_usuario = st.text_input("Novo usuário")
+        nova_senha = st.text_input("Nova senha", type="password")
+        if st.button("Cadastrar"):
+            if novo_usuario.strip() != "" and nova_senha.strip() != "":
+                # Verifica se já existe
+                if usuarios_ref.child(novo_usuario).get() is None:
+                    usuarios_ref.child(novo_usuario).set({
+                        "senha": nova_senha
+                    })
+                    st.success("Usuário cadastrado com sucesso!")
+                else:
+                    st.warning("Usuário já existe.")
+            else:
+                st.warning("Preencha usuário e senha.")
 
-
-    if token:
-        try:
-            idinfo = id_token.verify_oauth2_token(token, requests.Request(), CLIENT_ID)
-            st.session_state.user = {
-                "name": idinfo["name"],
-                "email": idinfo["email"],
-                "sub": idinfo["sub"]
-            }
-            st.experimental_rerun()
-        except Exception as e:
-            st.error("Erro ao autenticar.")
+    elif menu == "Login":
+        st.subheader("🔑 Login")
+        usuario = st.text_input("Usuário")
+        senha = st.text_input("Senha", type="password")
+        if st.button("Entrar"):
+            dados_usuario = usuarios_ref.child(usuario).get()
+            if dados_usuario and dados_usuario.get("senha") == senha:
+                st.session_state.usuario_logado = usuario
+                st.success("Login realizado com sucesso!")
+                st.experimental_rerun()
+            else:
+                st.error("Usuário ou senha incorretos.")
 else:
-    # Usuário autenticado
-    user = st.session_state.user
-    st.success(f"✅ Logado como {user['name']} ({user['email']})")
-    
-    # Botão de logout
-    if st.button("Sair"):
-        del st.session_state.user
+    # --- USUÁRIO AUTENTICADO ---
+    usuario = st.session_state.usuario_logado
+    st.sidebar.success(f"Logado como {usuario}")
+
+    if st.sidebar.button("Sair"):
+        del st.session_state.usuario_logado
         st.experimental_rerun()
 
     # --- CRUD ---
     st.header("➕ Inserir novo texto")
-
     novo_texto = st.text_input("Digite algo novo:")
+
+    user_ref = db.reference(f'dados/{usuario}')
 
     if st.button("Inserir"):
         if novo_texto.strip() != "":
             id_dado = str(uuid.uuid4())
-            user_ref = db.reference(f'dados/{user["sub"]}')
             user_ref.child(id_dado).set({
                 "texto": novo_texto
             })
@@ -78,7 +79,6 @@ else:
     st.divider()
     st.header("📋 Seus textos salvos:")
 
-    user_ref = db.reference(f'dados/{user["sub"]}')
     dados = user_ref.get()
 
     if dados:
