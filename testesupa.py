@@ -34,7 +34,8 @@ if "user" not in st.session_state:
     st.markdown(f"[Clique aqui para logar com o Google]({login_url})")
 
     # Capturar token da URL após o login
-    token = st.experimental_get_query_params().get("access_token", [None])[0]
+    token = st.query_params.get("access_token", [None])[0]
+
 
     if token:
         try:
