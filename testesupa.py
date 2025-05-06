@@ -1,55 +1,42 @@
 import streamlit as st
-from supabase import create_client, Client
+import firebase_admin
+from firebase_admin import credentials, db
+import uuid
+import json
 
-# ------------------------------
-# CONFIGURAÇÃO DO SUPABASE
-# ------------------------------
+# --- CONFIGURAÇÃO DO FIREBASE ---
 
-# Carrega as informações secretas do arquivo .streamlit/secrets.toml (local)
-# ou do painel de Secrets do Streamlit Cloud (produção)
-supabase_url: str = st.secrets["SUPABASE_URL"]
-supabase_key: str = st.secrets["SUPABASE_KEY"]
-supabase: Client = create_client(supabase_url, supabase_key)
+# Carrega a chave do Firebase do secrets
+firebase_key = json.loads(st.secrets["FIREBASE_KEY"])
 
-# ------------------------------
-# LAYOUT DO STREAMLIT
-# ------------------------------
+# Inicializa o Firebase (somente uma vez)
+if not firebase_admin._apps:
+    cred = credentials.Certificate(firebase_key)
+    firebase_admin.initialize_app(cred, {
+        'databaseURL': st.secrets["DATABASE_URL"]  # Pegando também do secrets (URL do Realtime Database)
+    })
 
-# Título da página
-st.title("📥 Inserir dados no Supabase")
+# --- INTERFACE DO USUÁRIO ---
 
-# Caixa de entrada centralizada
-col1, col2, col3 = st.columns([1, 2, 1])
+st.title("Inserir Dados no Firebase")
 
-with col2:
-    texto = st.text_input("Digite o texto que deseja salvar:")
+# Input de texto
+texto = st.text_input("Digite algo:")
 
-    # Botão para inserir o texto
-    if st.button("Inserir"):
-        if texto.strip() == "":
-            st.warning("⚠️ O campo de texto não pode estar vazio.")
-        else:
-            # Insere o texto na tabela "entries"
-            resultado = supabase.table("entries").insert({"text": texto}).execute()
+# Botão de inserir
+if st.button("Inserir"):
+    if texto.strip() != "":
+        # Cria um ID único para o dado
+        id_dado = str(uuid.uuid4())
 
-            # Verifica o resultado
-            if resultado.error:
-                st.error(f"❌ Erro ao inserir: {resultado.error.message}")
-            else:
-                st.success("✅ Texto inserido com sucesso no Supabase!")
+        # Referência ao local no banco de dados
+        ref = db.reference('dados')
 
-# ------------------------------
-# EXIBIR OS TEXTOS JÁ INSERIDOS
-# ------------------------------
+        # Envia o dado
+        ref.child(id_dado).set({
+            "texto": texto
+        })
 
-st.write("---")
-st.header("📄 Textos já inseridos:")
-
-# Busca todos os registros da tabela "entries"
-dados = supabase.table("entries").select("*").order("id", desc=True).execute()
-
-if dados.data:
-    for item in dados.data:
-        st.write(f"➡️ {item['text']}")
-else:
-    st.info("Ainda não há registros na tabela.")
+        st.success("Texto inserido com sucesso!")
+    else:
+        st.warning("Por favor, digite algo antes de inserir.")
