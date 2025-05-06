@@ -14,7 +14,7 @@ if not firebase_admin._apps:
 
 usuarios_ref = db.reference('usuarios')
 
-st.title("🔐 Sistema de Login Simples + CRUD")
+st.title("🔐 Sistema de Login + CRUD no Firebase")
 
 # --- AUTENTICAÇÃO ---
 
@@ -47,7 +47,7 @@ if "usuario_logado" not in st.session_state:
             if dados_usuario and dados_usuario.get("senha") == senha:
                 st.session_state.usuario_logado = usuario
                 st.success("Login realizado com sucesso!")
-                st.experimental_rerun()
+                st.rerun()
             else:
                 st.error("Usuário ou senha incorretos.")
 else:
@@ -57,7 +57,7 @@ else:
 
     if st.sidebar.button("Sair"):
         del st.session_state.usuario_logado
-        st.experimental_rerun()
+        st.rerun()
 
     # --- CRUD ---
     st.header("➕ Inserir novo texto")
@@ -72,7 +72,7 @@ else:
                 "texto": novo_texto
             })
             st.success("Texto inserido com sucesso!")
-            st.experimental_rerun()
+            st.rerun()
         else:
             st.warning("Digite algo para inserir.")
 
@@ -96,12 +96,12 @@ else:
                             "texto": novo_valor
                         })
                         st.success("Texto atualizado com sucesso!")
-                        st.experimental_rerun()
+                        st.rerun()
 
                 with col2:
                     if st.button("🗑️ Excluir", key=f"excluir_{id_dado}"):
                         user_ref.child(id_dado).delete()
                         st.warning("Texto excluído.")
-                        st.experimental_rerun()
+                        st.rerun()
     else:
         st.info("Nenhum texto salvo ainda.")
