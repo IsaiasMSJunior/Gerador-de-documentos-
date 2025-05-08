@@ -459,7 +459,7 @@ elif st.session_state.pagina == "Cadastro Extras":
                       on_click=lambda i=i: st.session_state.extras["metodologia"].pop(i)
                                           or salvar_json("extras.json", st.session_state.extras))
     with tab2:
-        st text_input("Recursos", key="input_rec")
+        st.text_input("Recursos", key="input_rec")
         st.button("Inserir Recursos",
                   on_click=lambda: st.session_state.extras["recursos"].append(st.session_state.input_rec)
                                or salvar_json("extras.json", st.session_state.extras)
