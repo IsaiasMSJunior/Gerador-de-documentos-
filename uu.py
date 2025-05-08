@@ -261,3 +261,6 @@ elif st.session_state.pagina == "Cadastro Extras":
         st.text_input("Critério de Avaliação", key="input_crit")
         st.button("Inserir Critério", on_click=lambda: st.session_state.extras['criterios'].append(st.session_state.input_crit) or salvar_json("extras.json", st.session_state.extras) or st.session_state.update(input_crit=""))
         for i, item in enumerate(st.session_state.extras['criterios']):
+            c1, c2 = st.columns([0.9, 0.1])
+            c1.write(f"- {item}")
+            c2.button("X", key=f"del_crit_{i}", on_click=lambda i=i: st.session_state.extras['criterios'].pop(i) or salvar_json("extras.json", st.session_state.extras))
