@@ -346,13 +346,19 @@ elif st.session_state.pagina == "Gerar Agenda e Plano":
 # 5. Cadastro Extras
 elif st.session_state.pagina == "Cadastro Extras":
     # mesma lógica de inserir e remover metodologias, recursos e critérios
+    pass
+    # mesma lógica de inserir e remover metodologias, recursos e critérios
 
 # 6. Gerar Guia
 elif st.session_state.pagina == "Gerar Guia":
     # lógica igual à original para guia
+    pass
+    # lógica igual à original para guia
 
 # 7. Gerar Planejamento Bimestral
 elif st.session_state.pagina == "Gerar Planejamento Bimestral":
+    # lógica igual à original para planejamento
+    pass
     # lógica igual à original para planejamento
 
 # Fim do código completo atualizado para Firebase e login simples
