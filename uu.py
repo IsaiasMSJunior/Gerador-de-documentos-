@@ -1,5 +1,6 @@
-import streamlit as st
+import os
 import json
+import streamlit as st
 import requests
 import firebase_admin
 from firebase_admin import credentials, auth, db
@@ -18,23 +19,20 @@ from openpyxl.styles import PatternFill
 st.set_page_config(page_title="Agenda Escolar", layout="wide")
 
 # --- Carregando configurações do Firebase ---
-import os
-
-if "firebase" in st.secrets:
-    # produção / Streamlit Cloud
-    service_account_info = json.loads(st.secrets["firebase"]["serviceAccount"])
-    database_url = st.secrets["firebase"]["databaseURL"]
-    api_key = st.secrets["firebase"]["apiKey"]
+if "FIREBASE_KEY" in st.secrets and "DATABASE_URL" in st.secrets:
+    # Service account JSON vindo dos secrets
+    service_account_info = json.loads(st.secrets["FIREBASE_KEY"])
+    database_url         = st.secrets["DATABASE_URL"]
+    # API Key opcional nos secrets, ou fallback para valor conhecido
+    api_key              = st.secrets.get("API_KEY", "AIzaSyB56d5ExrV7i4cwqnguqmf-VJykiBNqbD4")
 else:
-    # desenvolvimento local
-    if os.path.exists("serviceAccountKey.json"):
-        with open("serviceAccountKey.json", encoding="utf-8") as f:
-            service_account_info = json.load(f)
-    else:
-        st.error("Arquivo serviceAccountKey.json não encontrado. Faça upload na raiz do projeto ou configure st.secrets['firebase'].")
-        st.stop()
-    database_url = "https://gerador-de-documentos-ce501-default-rtdb.firebaseio.com/"
-    api_key = "AIzaSyB56d5ExrV7i4cwqnguqmf-VJykiBNqbD4"
+    st.error(
+        "Por favor configure seus secrets:\n"
+        "- FIREBASE_KEY contendo o JSON da sua chave de serviço,\n"
+        "- DATABASE_URL com a URL do Realtime Database.\n"
+        "Se estiver no Streamlit Cloud, vá em Settings → Secrets."
+    )
+    st.stop()
 
 # --- Inicialização do Firebase Admin SDK ---
 if not firebase_admin._apps:
@@ -49,7 +47,7 @@ if not st.session_state.authenticated:
     login_tab, register_tab = st.tabs(["Login", "Registrar"])
     with login_tab:
         st.header("Login")
-        email = st.text_input("Email", key="login_email")
+        email    = st.text_input("Email", key="login_email")
         password = st.text_input("Senha", type="password", key="login_password")
         if st.button("Entrar"):
             payload = {"email": email, "password": password, "returnSecureToken": True}
@@ -59,7 +57,7 @@ if not st.session_state.authenticated:
             )
             if res.status_code == 200:
                 st.session_state.authenticated = True
-                st.session_state.user = email
+                st.session_state.user          = email
                 st.success("Login bem-sucedido!")
                 st.experimental_rerun()
             else:
@@ -67,12 +65,12 @@ if not st.session_state.authenticated:
                 st.error(f"Login falhou: {err}")
     with register_tab:
         st.header("Registrar")
-        reg_email = st.text_input("Email", key="reg_email")
+        reg_email    = st.text_input("Email", key="reg_email")
         reg_password = st.text_input("Senha", type="password", key="reg_password")
         if st.button("Registrar"):
             try:
                 auth.create_user(email=reg_email, password=reg_password)
-                st.success("Usuário registrado! Faça login.")
+                st.success("Usuário registrado! Agora faça login.")
             except Exception as e:
                 st.error(f"Erro ao registrar: {e}")
     st.stop()
@@ -87,14 +85,15 @@ def carregar_json(nome):
         return [data[k] for k in sorted(data.keys(), key=int)]
     return data
 
-
 def salvar_json(nome, conteudo):
     key = nome.replace(".json", "")
     db.reference(key).set(conteudo)
 
 # --- Helpers e Configurações Gerais ---
-map_hor = {"1ª":"7:00–7:50","2ª":"7:50–8:40","3ª":"8:40–9:30",
-           "4ª":"9:50–10:40","5ª":"10:40–11:30","6ª":"12:20–13:10","7ª":"13:10–14:00"}
+map_hor = {
+    "1ª": "7:00–7:50", "2ª": "7:50–8:40", "3ª": "8:40–9:30",
+    "4ª": "9:50–10:40", "5ª": "10:40–11:30", "6ª": "12:20–13:10", "7ª": "13:10–14:00"
+}
 meses = ["Janeiro","Fevereiro","Março","Abril","Maio","Junho",
          "Julho","Agosto","Setembro","Outubro","Novembro","Dezembro"]
 ano_planej = 2025
@@ -103,11 +102,8 @@ def extrai_serie(turma: str) -> str:
     return turma[:-1]
 
 def set_border(par: Paragraph):
-    p = par._p
-    pPr = p.get_or_add_pPr()
-    pBdr = OxmlElement('w:pBdr')
-    bd = OxmlElement('w:bottom')
-    bd.set(qn('w:val'),'single'); bd.set(qn('w:sz'),'4')
+    p = par._p; pPr = p.get_or_add_pPr(); pBdr = OxmlElement('w:pBdr')
+    bd = OxmlElement('w:bottom'); bd.set(qn('w:val'),'single'); bd.set(qn('w:sz'),'4')
     bd.set(qn('w:space'),'1'); bd.set(qn('w:color'),'auto')
     pBdr.append(bd); pPr.append(pBdr)
 
@@ -118,7 +114,137 @@ def insert_after(par: Paragraph, text='') -> Paragraph:
     return para
 
 # --- Funções de geração de documentos ---
-# (as funções 'gerar_agenda_template', 'gerar_plano_template', 'gerar_guia_template', 'gerar_planejamento_template' iguais às versões definidas acima)
+def gerar_agenda_template(entries, df_bank, professor, semana, bimestre, cores_turmas):
+    wb = load_workbook("agenda_modelo.xlsx")
+    ws = wb.active
+    ws["B1"] = professor
+    ws["E1"] = semana
+    row_map = {"1ª":4,"2ª":6,"3ª":8,"4ª":12,"5ª":14,"6ª":18,"7ª":20}
+    col_map = {"Segunda":"C","Terça":"D","Quarta":"E","Quinta":"F","Sexta":"G"}
+    for e in entries:
+        col,row = col_map[e["dia"]], row_map[e["aula"]]
+        cell1 = ws[f"{col}{row}"]; cell1.value = f"{e['turma']} – {e['disciplina']}"
+        color = cores_turmas.get(e['turma'], "#FFFFFF").lstrip("#")
+        fill = PatternFill(start_color=color,end_color=color,fill_type="solid")
+        cell1.fill = fill
+        title = ""
+        if not df_bank.empty:
+            sub = df_bank.loc[
+                (df_bank["DISCIPLINA"]==e["disciplina"]) &
+                (df_bank["ANO/SÉRIE"]==extrai_serie(e["turma"])) &
+                (df_bank["BIMESTRE"]==bimestre) &
+                (df_bank["Nº da aula"]==e["num"]),
+                "TÍTULO DA AULA"
+            ]
+            if not sub.empty: title = sub.iloc[0]
+        cell2 = ws[f"{col}{row+1}"]; cell2.value = f"Aula {e['num']} – {title}"; cell2.fill = fill
+    out = BytesIO(); wb.save(out); out.seek(0)
+    return out
+
+def gerar_plano_template(entries, df_bank, professor, semana, bimestre, turma,
+                         metodologias, recursos, criterios, modelo="modelo_plano.docx"):
+    doc = Document(modelo)
+    header_disc = ", ".join(sorted({e['disciplina'] for e in entries}))
+    total = str(len(entries))
+    # Substituir placeholders
+    for p in doc.paragraphs:
+        p.text = p.text.replace("ppp", professor).replace("ttt", turma)
+        p.text = p.text.replace("sss", semana).replace("ddd", header_disc).replace("nnn", total)
+    for tbl in doc.tables:
+        for row in tbl.rows:
+            for cell in row.cells:
+                for p in cell.paragraphs:
+                    p.text = p.text.replace("ppp", professor).replace("ttt", turma)
+                    p.text = p.text.replace("sss", semana).replace("ddd", header_disc).replace("nnn", total)
+    # Bloco de aulas
+    for p in doc.paragraphs:
+        if p.text.strip() == "ccc":
+            p.text = ""; last = p
+            for e in entries:
+                sub = df_bank.loc[
+                    (df_bank["DISCIPLINA"]==e['disciplina']) &
+                    (df_bank["ANO/SÉRIE"]==extrai_serie(turma)) &
+                    (df_bank["BIMESTRE"]==bimestre) &
+                    (df_bank["Nº da aula"]==e['num'])
+                ]
+                titulo = sub["TÍTULO DA AULA"].iloc[0] if not sub.empty else ""
+                hab    = sub["HABILIDADE"].iloc[0] if not sub.empty else ""
+                cnt    = sub["CONTEÚDO"].iloc[0] if not sub.empty else ""
+                pa = insert_after(last, f"Aula {e['num']} – {titulo}"); pa.runs[0].bold=True; last=pa
+                insert_after(last, f"Habilidade: {hab}")
+                insert_after(last, f"Conteúdo: {cnt}")
+            if metodologias:
+                insert_after(last, "Metodologia:")
+                for m in metodologias: insert_after(last, f"• {m}")
+            if recursos:
+                insert_after(last, "Recursos:")
+                for r in recursos: insert_after(last, f"• {r}")
+            if criterios:
+                insert_after(last, "Critérios de Avaliação:")
+                for c in criterios: insert_after(last, f"• {c}")
+            break
+    out = BytesIO(); doc.save(out); out.seek(0)
+    return out
+
+def gerar_guia_template(professor, turma, disciplina, bimestre, inicio, fim,
+                        qtd_bim, qtd_sem, metodologias, criterios, df_bank,
+                        modelo="modelo_guia.docx"):
+    doc = Document(modelo)
+    reps = {
+        'ppp': professor, 'ttt': turma, 'bbb': bimestre,
+        'iii': inicio.strftime('%d/%m/%Y'), 'fff': fim.strftime('%d/%m/%Y'),
+        'qqq': str(qtd_bim), 'sss': str(qtd_sem)
+    }
+    for k,v in reps.items():
+        for p in doc.paragraphs:
+            if k in p.text: p.text = p.text.replace(k, v)
+        for tbl in doc.tables:
+            for row in tbl.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        if k in p.text: p.text = p.text.replace(k, v)
+    mask = (
+        (df_bank["DISCIPLINA"]==disciplina) &
+        (df_bank["ANO/SÉRIE"]==extrai_serie(turma)) &
+        (df_bank["BIMESTRE"]==bimestre)
+    )
+    habs = list(dict.fromkeys(df_bank.loc[mask,"HABILIDADE"].dropna().astype(str)))
+    objs = list(dict.fromkeys(df_bank.loc[mask,"OBJETO DE CONHECIMENTO"].dropna().astype(str)))
+    for p in doc.paragraphs:
+        if 'hhh' in p.text: p.text = "\n".join(habs)
+        if 'ooo' in p.text: p.text = "\n".join(objs)
+    out = BytesIO(); doc.save(out); out.seek(0)
+    return out
+
+def gerar_planejamento_template(professor, disciplina, turma, bimestre,
+                                grupos, df_bank, modelo="modelo_planejamento.docx"):
+    doc = Document(modelo)
+    hdr = {'ppp':professor,'ddd':disciplina,'ttt':turma,'bbb':bimestre}
+    for k,v in hdr.items():
+        for p in doc.paragraphs:
+            if k in p.text: p.text = p.text.replace(k, v)
+        for tbl in doc.tables:
+            for row in tbl.rows:
+                for cell in row.cells:
+                    for p in cell.paragraphs:
+                        if k in p.text: p.text = p.text.replace(k, v)
+    for grp in grupos:
+        doc.add_paragraph(f"Semana: {grp['semana']}")
+        doc.add_paragraph(f"Aulas previstas: {grp['prev']}")
+        for n in grp['nums']:
+            titles = df_bank.loc[
+                (df_bank["DISCIPLINA"]==disciplina) &
+                (df_bank["ANO/SÉRIE"]==extrai_serie(turma)) &
+                (df_bank["BIMESTRE"]==bimestre) &
+                (df_bank["Nº da aula"]==n),
+                "TÍTULO DA AULA"
+            ].dropna().tolist()
+            title = titles[0] if titles else ""
+            doc.add_paragraph(f"Aula {n} – {title}")
+        doc.add_paragraph(f"Metodologia: {', '.join(grp['met'])}")
+        doc.add_paragraph(f"Critérios: {', '.join(grp['crit'])}")
+    out = BytesIO(); doc.save(out); out.seek(0)
+    return out
 
 # --- Inicialização de estado ---
 if "extras" not in st.session_state:
@@ -158,11 +284,11 @@ if st.session_state.pagina == "Cadastro de Professor":
          "Português","Inglês","Matemática","PV","Redação","Tecnologia","OE Port","OE Mat"]
     )
     if st.button("Salvar Professor"):
-        st.session_state.professores.append({"nome": nome, "disciplinas": disciplinas})
+        st.session_state.professores.append({"nome":nome,"disciplinas":disciplinas})
         salvar_json("professores.json", st.session_state.professores)
         st.success("Professor salvo!")
-    for p in st.session_state.professores:
-        st.write(f"{p['nome']} — {', '.join(p['disciplinas'])}")
+    for prof in st.session_state.professores:
+        st.write(f"{prof['nome']} — {', '.join(prof['disciplinas'])}")
 
 # 2. Cadastro de Turmas
 elif st.session_state.pagina == "Cadastro de Turmas":
@@ -180,11 +306,11 @@ elif st.session_state.pagina == "Cadastro de Turmas":
         "1º":["1ºA","1ºB","1ºC","1ºD","1ºE"],
         "2º":["2ºA ADM","2ºB ADM","2ºC"],"3º":["3ºA","3ºA ADM","3ºB ADM","3ºB LOG"]
     }
-    op = sum((turma_map.get(s, []) for s in series), [])
+    op = sum((turma_map.get(s,[]) for s in series), [])
     sel = st.multiselect("Turma(s)", op, default=list(saved.keys()), key="sel_turmas")
     cores = {}
     for t in sel:
-        cores[t] = st.color_picker(f"Cor {t}", value=saved.get(t, "#FFFFFF"), key=f"cor_{t}")
+        cores[t] = st.color_picker(f"Cor {t}", value=saved.get(t,"#FFFFFF"), key=f"cor_{t}")
     if st.button("Salvar Turmas"):
         st.session_state.turmas = cores
         salvar_json("turmas.json", st.session_state.turmas)
@@ -198,9 +324,9 @@ elif st.session_state.pagina == "Cadastro de Horário":
     for i, itm in enumerate(st.session_state.horarios):
         cols = st.columns(6)
         turmas = list(st.session_state.turmas.keys())
-        discs = sorted({d for p in st.session_state.professores for d in p['disciplinas']})
-        dias = ["Segunda","Terça","Quarta","Quinta","Sexta"]
-        aulas = list(map_hor.keys())
+        discs  = sorted({d for p in st.session_state.professores for d in p["disciplinas"]})
+        dias   = ["Segunda","Terça","Quarta","Quinta","Sexta"]
+        aulas  = list(map_hor.keys())
         itm['turma']      = cols[0].selectbox("Turma", turmas, index=turmas.index(itm.get('turma')) if itm.get('turma') in turmas else 0, key=f"turma_{i}")
         itm['disciplina'] = cols[1].selectbox("Disciplina", discs, index=discs.index(itm.get('disciplina')) if itm.get('disciplina') in discs else 0, key=f"disc_{i}")
         itm['dia']        = cols[2].selectbox("Dia", dias, index=dias.index(itm.get('dia')) if itm.get('dia') in dias else 0, key=f"dia_{i}")
@@ -222,11 +348,15 @@ elif st.session_state.pagina == "Gerar Agenda e Plano":
         st.warning("Cadastre horários primeiro.")
     else:
         df_bank = pd.read_excel("ES_banco.xlsx", header=0)
-        prof = st.selectbox("Professor(a)", [p['nome'] for p in st.session_state.professores])
-        bim = st.selectbox("Bimestre", ["1º","2º","3º","4º"])
-        mes_nome = st.selectbox("Mês", meses)
-        semanas = [f"{w[0].strftime('%d/%m')} – {w[-1].strftime('%d/%m')}" for w in calendar.Calendar().monthdatescalendar(datetime.now().year, meses.index(mes_nome)+1) if w[0].month == meses.index(mes_nome)+1]
-        sem_sel = st.selectbox("Semana", semanas)
+        prof = st.selectbox("Professor(a)", [p["nome"] for p in st.session_state.professores])
+        bim  = st.selectbox("Bimestre", ["1º","2º","3º","4º"])
+        mes_nome  = st.selectbox("Mês", meses)
+        semanas   = [
+            f"{w[0].strftime('%d/%m')} – {w[-1].strftime('%d/%m')}"
+            for w in calendar.Calendar().monthdatescalendar(datetime.now().year, meses.index(mes_nome)+1)
+            if w[0].month == meses.index(mes_nome)+1
+        ]
+        sem_sel   = st.selectbox("Semana", semanas)
         turma_idx = {}
         for idx, itm in enumerate(st.session_state.horarios):
             turma_idx.setdefault(itm['turma'], []).append(idx)
@@ -235,40 +365,133 @@ elif st.session_state.pagina == "Gerar Agenda e Plano":
         for tab, turma in zip(tabs, turma_idx.keys()):
             with tab:
                 st.subheader(f"Turma {turma}")
-                met_sel = st.multiselect("Metodologia", st.session_state.extras['metodologia'], key=f"met_sel_{turma}")
-                rec_sel = st.multiselect("Recursos", st.session_state.extras['recursos'], key=f"rec_sel_{turma}")
-                crit_sel = st.multiselect("Critérios de Avaliação", st.session_state.extras['criterios'], key=f"crit_sel_{turma}")
+                met_sel  = st.multiselect("Metodologia", st.session_state.extras["metodologia"], key=f"met_sel_{turma}")
+                rec_sel  = st.multiselect("Recursos",      st.session_state.extras["recursos"],     key=f"rec_sel_{turma}")
+                crit_sel = st.multiselect("Critérios",     st.session_state.extras["criterios"],    key=f"crit_sel_{turma}")
                 for idx in turma_idx[turma]:
                     h = st.session_state.horarios[idx]
                     st.markdown(f"**{turma} | {h['disciplina']} | {h['dia']} | {h['aula']}**")
-                    opts = pd.Series(df_bank.loc[(df_bank['DISCIPLINA']==h['disciplina']) & (df_bank['ANO/SÉRIE']==extrai_serie(turma)) & (df_bank['BIMESTRE']==bim), 'Nº da aula'].dropna()).astype(int).unique().tolist()
-                    num = st.selectbox("Nº da aula", sorted(opts), key=f"num_{turma}_{idx}")
-                    entries.append({**h, 'num': num})
+                    opts = sorted(pd.Series(
+                        df_bank.loc[
+                            (df_bank["DISCIPLINA"]==h['disciplina']) &
+                            (df_bank["ANO/SÉRIE"]==extrai_serie(turma)) &
+                            (df_bank["BIMESTRE"]==bim),
+                            "Nº da aula"
+                        ].dropna().astype(int)
+                    ).unique().tolist())
+                    num = st.selectbox("Nº da aula", opts, key=f"num_{turma}_{idx}")
+                    entries.append({**h, "num": num})
                 if st.button("Gerar Plano", key=f"gera_plano_{turma}"):
-                    arq = gerar_plano_template([e for e in entries if e['turma']==turma], df_bank, prof, sem_sel, bim, turma, metodologias=met_sel, recursos=rec_sel, criterios=crit_sel)
-                    st.download_button(f"Download Plano {turma}", data=arq, file_name=f"plano_{turma}.docx", mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+                    arq = gerar_plano_template(
+                        [e for e in entries if e["turma"]==turma],
+                        df_bank, prof, sem_sel, bim, turma,
+                        metodologias=met_sel, recursos=rec_sel, criterios=crit_sel
+                    )
+                    st.download_button(
+                        f"Download Plano {turma}", data=arq,
+                        file_name=f"plano_{turma}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
         if st.button("Gerar Agenda"):
             ag = gerar_agenda_template(entries, df_bank, prof, sem_sel, bim, st.session_state.turmas)
-            st.download_button("Download Agenda", data=ag, file_name="agenda_preenchida.xlsx", mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            st.download_button(
+                "Download Agenda", data=ag,
+                file_name="agenda_preenchida.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
 
 # 5. Cadastro Extras
 elif st.session_state.pagina == "Cadastro Extras":
     st.header("Cadastro Extras")
-    tab1, tab2, tab3 = st.tabs(["Metodologia","Recursos","Critérios de Avaliação"])
+    tab1, tab2, tab3 = st.tabs(["Metodologia","Recursos","Critérios"])
     with tab1:
         st.text_input("Metodologia", key="input_met")
-        st.button("Inserir Metodologia", on_click=lambda: st.session_state.extras['metodologia'].append(st.session_state.input_met) or salvar_json("extras.json", st.session_state.extras) or st.session_state.update(input_met=""))
-        for i, item in enumerate(st.session_state.extras['metodologia']):
-            c1,c2 = st.columns([0.9,0.1]); c1.write(f"- {item}"); c2.button("X", key=f"del_met_{i}", on_click=lambda i=i: st.session_state.extras['metodologia'].pop(i) or salvar_json("extras.json", st.session_state.extras))
+        st.button("Inserir", on_click=lambda: st.session_state.extras["metodologia"].append(st.session_state.input_met) or salvar_json("extras.json", st.session_state.extras) or st.session_state.update(input_met=""))
+        for i, item in enumerate(st.session_state.extras["metodologia"]):
+            c1, c2 = st.columns([0.9,0.1])
+            c1.write(f"- {item}")
+            c2.button("X", key=f"del_met_{i}", on_click=lambda i=i: st.session_state.extras["metodologia"].pop(i) or salvar_json("extras.json", st.session_state.extras))
     with tab2:
         st.text_input("Recursos", key="input_rec")
-        st.button("Inserir Recursos", on_click=lambda: st.session_state.extras['recursos'].append(st.session_state.input_rec) or salvar_json("extras.json", st.session_state.extras) or st.session_state.update(input_rec=""))
-        for i, item in enumerate(st.session_state.extras['recursos']):
-            c1,c2 = st.columns([0.9,0.1]); c1.write(f"- {item}"); c2.button("X", key=f"del_rec_{i}", on_click=lambda i=i: st.session_state.extras['recursos'].pop(i) or salvar_json("extras.json", st.session_state.extras))
-    with tab3:
-        st.text_input("Critério de Avaliação", key="input_crit")
-        st.button("Inserir Critério", on_click=lambda: st.session_state.extras['criterios'].append(st.session_state.input_crit) or salvar_json("extras.json", st.session_state.extras) or st.session_state.update(input_crit=""))
-        for i, item in enumerate(st.session_state.extras['criterios']):
-            c1, c2 = st.columns([0.9, 0.1])
+        st.button("Inserir", on_click=lambda: st.session_state.extras["recursos"].append(st.session_state.input_rec) or salvar_json("extras.json", st.session_state.extras) or st.session_state.update(input_rec=""))
+        for i, item in enumerate(st.session_state.extras["recursos"]):
+            c1, c2 = st.columns([0.9,0.1])
             c1.write(f"- {item}")
-            c2.button("X", key=f"del_crit_{i}", on_click=lambda i=i: st.session_state.extras['criterios'].pop(i) or salvar_json("extras.json", st.session_state.extras))
+            c2.button("X", key=f"del_rec_{i}", on_click=lambda i=i: st.session_state.extras["recursos"].pop(i) or salvar_json("extras.json", st.session_state.extras))
+    with tab3:
+        st.text_input("Critério", key="input_crit")
+        st.button("Inserir", on_click=lambda: st.session_state.extras["criterios"].append(st.session_state.input_crit) or salvar_json("extras.json", st.session_state.extras) or st.session_state.update(input_crit=""))
+        for i, item in enumerate(st.session_state.extras["criterios"]):
+            c1, c2 = st.columns([0.9,0.1])
+            c1.write(f"- {item}")
+            c2.button("X", key=f"del_crit_{i}", on_click=lambda i=i: st.session_state.extras["criterios"].pop(i) or salvar_json("extras.json", st.session_state.extras))
+
+# 6. Gerar Guia
+elif st.session_state.pagina == "Gerar Guia":
+    st.header("Gerar Guia")
+    if not st.session_state.horarios:
+        st.warning("Cadastre horários primeiro.")
+    else:
+        df_bank = pd.read_excel("ES_banco.xlsx", header=0)
+        prof = st.selectbox("Professor(a)", [p["nome"] for p in st.session_state.professores])
+        bim  = st.selectbox("Bimestre", ["1º","2º","3º","4º"])
+        inicio = st.date_input("Início"); fim = st.date_input("Fim")
+        turmas = sorted({h["turma"] for h in st.session_state.horarios})
+        tabs   = st.tabs(turmas)
+        for tab, turma in zip(tabs, turmas):
+            with tab:
+                disc = st.selectbox("Disciplina", sorted({h["disciplina"] for h in st.session_state.horarios if h["turma"]==turma}), key=f"disc_g_{turma}")
+                q_bim = st.number_input("Qtd aulas bimestre", min_value=1, key=f"q_bim_{turma}")
+                q_sem = st.number_input("Qtd aulas semanais", min_value=1, key=f"q_sem_{turma}")
+                met_sel  = st.multiselect("Metodologias", st.session_state.extras["metodologia"], key=f"met_g_{turma}")
+                crit_sel = st.multiselect("Critérios", st.session_state.extras["criterios"], key=f"crit_g_{turma}")
+                if st.button("Gerar Guia", key=f"gera_guia_{turma}"):
+                    arq = gerar_guia_template(prof, turma, disc, bim, inicio, fim, q_bim, q_sem, met_sel, crit_sel, df_bank)
+                    st.download_button(
+                        f"Download Guia {turma}", data=arq,
+                        file_name=f"guia_{turma}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
+
+# 7. Gerar Planejamento Bimestral
+elif st.session_state.pagina == "Gerar Planejamento Bimestral":
+    st.header("Gerar Planejamento Bimestral")
+    if not st.session_state.horarios:
+        st.warning("Cadastre horários primeiro.")
+    else:
+        df_bank = pd.read_excel("ES_banco.xlsx", header=0)
+        prof = st.selectbox("Professor(a)", [p["nome"] for p in st.session_state.professores])
+        bim  = st.selectbox("Bimestre", ["1º","2º","3º","4º"])
+        turmas = sorted({h["turma"] for h in st.session_state.horarios})
+        tabs   = st.tabs(turmas)
+        for tab, turma in zip(tabs, turmas):
+            with tab:
+                cnt_key = f"count_{turma}"
+                if cnt_key not in st.session_state: st.session_state[cnt_key] = 1
+                grupos = []
+                for i in range(st.session_state[cnt_key]):
+                    with st.expander(f"Planejamento {i+1}", expanded=True):
+                        mes = st.selectbox("Mês", meses, key=f"plan_mes_{turma}_{i}")
+                        semanas = [
+                            f"{w[0].strftime('%d/%m')} – {w[4].strftime('%d/%m')}"
+                            for w in calendar.Calendar().monthdatescalendar(ano_planej, meses.index(mes)+1)
+                            if all(d.month==meses.index(mes)+1 for d in w[:5])
+                        ]
+                        semana = st.selectbox("Semana", semanas, key=f"plan_sem_{turma}_{i}")
+                        prev   = st.number_input("Aulas previstas", min_value=1, key=f"plan_prev_{turma}_{i}")
+                        nums_opts = sorted(int(a.replace("ª","")) for a in map_hor.keys())
+                        nums = st.multiselect("Nº das aulas", nums_opts, key=f"plan_nums_{turma}_{i}")
+                        met = st.multiselect("Metodologias", st.session_state.extras["metodologia"], key=f"plan_met_{turma}_{i}")
+                        crit = st.multiselect("Critérios", st.session_state.extras["criterios"], key=f"plan_crit_{turma}_{i}")
+                        grupos.append({"semana":semana,"prev":prev,"nums":nums,"met":met,"crit":crit})
+                if st.button("Adicionar", key=f"add_plan_{turma}"):
+                    st.session_state[cnt_key] += 1
+                if st.button("Gerar Planejamento", key=f"gera_plan_{turma}"):
+                    disc_set = sorted({h["disciplina"] for h in st.session_state.horarios if h["turma"]==turma})
+                    disciplina = ", ".join(disc_set)
+                    arq = gerar_planejamento_template(prof, disciplina, turma, bim, grupos, df_bank)
+                    st.download_button(
+                        f"Download Planejamento {turma}", data=arq,
+                        file_name=f"planejamento_{turma}.docx",
+                        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                    )
