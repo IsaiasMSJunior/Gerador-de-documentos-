@@ -18,13 +18,21 @@ from openpyxl.styles import PatternFill
 st.set_page_config(page_title="Agenda Escolar", layout="wide")
 
 # --- Carregando configurações do Firebase ---
+import os
+
 if "firebase" in st.secrets:
+    # produção / Streamlit Cloud
     service_account_info = json.loads(st.secrets["firebase"]["serviceAccount"])
     database_url = st.secrets["firebase"]["databaseURL"]
     api_key = st.secrets["firebase"]["apiKey"]
 else:
-    with open("serviceAccountKey.json", encoding="utf-8") as f:
-        service_account_info = json.load(f)
+    # desenvolvimento local
+    if os.path.exists("serviceAccountKey.json"):
+        with open("serviceAccountKey.json", encoding="utf-8") as f:
+            service_account_info = json.load(f)
+    else:
+        st.error("Arquivo serviceAccountKey.json não encontrado. Faça upload na raiz do projeto ou configure st.secrets['firebase'].")
+        st.stop()
     database_url = "https://gerador-de-documentos-ce501-default-rtdb.firebaseio.com/"
     api_key = "AIzaSyB56d5ExrV7i4cwqnguqmf-VJykiBNqbD4"
 
