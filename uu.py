@@ -16,11 +16,30 @@ from openpyxl.styles import PatternFill
 # Adicione 'firebase-admin' em requirements.txt
 
 # --- Inicialização do Firebase ---
-service_account_info = json.loads(st.secrets["firebase_key"])
+# Carrega a chave de serviço do secrets.toml
+secret_key = None
+if "firebase_key" in st.secrets:
+    secret_key = st.secrets["firebase_key"]
+elif "firebase" in st.secrets and "firebase_key" in st.secrets["firebase"]:
+    secret_key = st.secrets["firebase"]["firebase_key"]
+else:
+    st.error("Chave de serviço do Firebase não encontrada em secrets do Streamlit Cloud.")
+    st.stop()
+
+# Converte JSON em dict
+service_account_info = json.loads(secret_key)
 cred = credentials.Certificate(service_account_info)
-firebase_admin.initialize_app(cred, {
-    "databaseURL": st.secrets["databaseURL"]
-})
+
+# Carrega o databaseURL
+if "databaseURL" in st.secrets:
+    database_url = st.secrets["databaseURL"]
+elif "firebase" in st.secrets and "databaseURL" in st.secrets["firebase"]:
+    database_url = st.secrets["firebase"]["databaseURL"]
+else:
+    st.error("databaseURL não encontrada em secrets do Streamlit Cloud.")
+    st.stop()
+
+firebase_admin.initialize_app(cred, {"databaseURL": database_url})
 
 # Configuração da página
 st.set_page_config(page_title="Agenda Escolar", layout="wide")
@@ -90,163 +109,14 @@ def gerar_agenda_template(entries, df_bank, professor, semana, bimestre, cores_t
                 (df_bank["DISCIPLINA"]==e["disciplina"]) &
                 (df_bank["ANO/SÉRIE"]==extrai_serie(e["turma"])) &
                 (df_bank["BIMESTRE"]==bimestre) &
-                (df_bank["Nº da aula"]==e["num"]
-            )]
+                (df_bank["Nº da aula"]==e["num"])
+            ]
             if not sel.empty:
                 titulo = sel["TÍTULO DA AULA"].iloc[0]
         ws[f"{col}{row+1}"] = f"Aula {e['num']} – {titulo}"
         ws[f"{col}{row+1}"].fill = fill
     out = BytesIO(); wb.save(out); out.seek(0)
     return out
-
-
-def gerar_plano_template(entries, df_bank, professor, semana, bimestre, turma,
-                         metodologias, recursos, criterios, modelo="modelo_plano.docx"):
-    doc = Document(modelo)
-    header_disciplinas = ", ".join(sorted({e['disciplina'] for e in entries}))
-    total_aulas = str(len(entries))
-    # Cabeçalho
-    for p in doc.paragraphs:
-        for tag, value in {"ppp":professor,"ttt":turma,"sss":semana,"ddd":header_disciplinas,"nnn":total_aulas}.items():
-            if tag in p.text:
-                p.text = p.text.replace(tag, value)
-    for tbl in doc.tables:
-        for row in tbl.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    for tag, value in {"ppp":professor,"ttt":turma,"sss":semana,"ddd":header_disciplinas,"nnn":total_aulas}.items():
-                        if tag in p.text:
-                            p.text = p.text.replace(tag, value)
-    # Blocos de aula
-    for p in doc.paragraphs:
-        if p.text.strip() == "ccc":
-            p.text = ""; last = p
-            insert_after(last); set_border(last)
-            for e in entries:
-                sub = df_bank[
-                    (df_bank["DISCIPLINA"]==e["disciplina"]) &
-                    (df_bank["ANO/SÉRIE"]==extrai_serie(turma)) &
-                    (df_bank["BIMESTRE"]==bimestre) &
-                    (df_bank["Nº da aula"]==e["num"]
-                )]
-                titulo = sub["TÍTULO DA AULA"].iloc[0] if not sub.empty else ""
-                pa = insert_after(last, f"Aula {e['num']} – {titulo}")
-                pa.runs[0].bold=True; last=pa
-                insert_after(last)
-            # Extras: metodologias, recursos, criterios
-            if metodologias:
-                insert_after(last, "Metodologia:")
-                for m in metodologias: insert_after(last, f"• {m}")
-            if recursos:
-                insert_after(last, "Recursos:")
-                for r in recursos: insert_after(last, f"• {r}")
-            if criterios:
-                insert_after(last, "Critérios de Avaliação:")
-                for c in criterios: insert_after(last, f"• {c}")
-            break
-    out = BytesIO(); doc.save(out); out.seek(0)
-    return out
-
-
-def gerar_guia_template(professor, turma, disciplina, bimestre, inicio, fim,
-                        qtd_bimestre, qtd_semanal, metodologias, criterios,
-                        df_bank, modelo="modelo_guia.docx"):
-    doc = Document(modelo)
-    replacements = {
-        'ppp': professor,
-        'ttt': turma,
-        'bbb': bimestre,
-        'iii': inicio.strftime('%d/%m/%Y'),
-        'fff': fim.strftime('%d/%m/%Y'),
-        'qqq': str(qtd_bimestre),
-        'sss': str(qtd_semanal),
-        'mmm': ", ".join(metodologias),
-        'ccc': ", ".join(criterios),
-        'ddd': disciplina
-    }
-    for p in doc.paragraphs:
-        for tag, val in replacements.items():
-            if tag in p.text: p.text = p.text.replace(tag, val)
-    for tbl in doc.tables:
-        for row in tbl.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    for tag, val in replacements.items():
-                        if tag in p.text: p.text = p.text.replace(tag, val)
-    # Habilidades e objetos
-    mask = (
-        (df_bank["DISCIPLINA"]==disciplina)&
-        (df_bank["ANO/SÉRIE"]==extrai_serie(turma))&
-        (df_bank["BIMESTRE"]==bimestre)
-    )
-    habs = df_bank.loc[mask, "HABILIDADE"].dropna().astype(str).tolist()
-    objs = df_bank.loc[mask, "OBJETO_DE_CONHECIMENTO"].dropna().astype(str).tolist()
-    unique_habs = list(dict.fromkeys(habs))
-    unique_objs = list(dict.fromkeys(objs))
-    for p in doc.paragraphs:
-        if 'hhh' in p.text: p.text = "\n".join(unique_habs)
-        if 'ooo' in p.text: p.text = "\n".join(unique_objs)
-    for tbl in doc.tables:
-        for row in tbl.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    if 'hhh' in p.text: p.text = "\n".join(unique_habs)
-                    if 'ooo' in p.text: p.text = "\n".join(unique_objs)
-    out = BytesIO(); doc.save(out); out.seek(0)
-    return out
-
-
-def gerar_planejamento_template(professor, disciplina, turma, bimestre,
-                                grupos, df_bank, modelo="modelo_planejamento.docx"):
-    doc = Document(modelo)
-    # Substituições iniciais
-    for p in doc.paragraphs:
-        for tag,val in {'ppp':professor,'ddd':disciplina,'ttt':turma,'bbb':bimestre}.items():
-            if tag in p.text: p.text = p.text.replace(tag,val)
-    for tbl in doc.tables:
-        for row in tbl.rows:
-            for cell in row.cells:
-                for p in cell.paragraphs:
-                    for tag,val in {'ppp':professor,'ddd':disciplina,'ttt':turma,'bbb':bimestre}.items():
-                        if tag in p.text: p.text = p.text.replace(tag,val)
-    # Grupos de planejamento
-    for grp in grupos:
-        p0 = doc.add_paragraph(f"Semana: {grp['semana']}")
-        for n in grp['nums']:
-            mask = (
-                (df_bank["DISCIPLINA"]==disciplina)&
-                (df_bank["ANO/SÉRIE"]==extrai_serie(turma))&
-                (df_bank["BIMESTRE"]==bimestre)&
-                (df_bank["Nº da aula"]==n)
-            )
-            titles = df_bank.loc[mask,"TÍTULO DA AULA"].dropna().tolist()
-            title = titles[0] if titles else ""
-            doc.add_paragraph(f"Aula {n} – {title}")
-        doc.add_paragraph(f"Metodologia: {', '.join(grp['met'])}")
-        doc.add_paragraph(f"Critérios: {', '.join(grp['crit'])}")
-    out = BytesIO(); doc.save(out); doc.seek(0)
-    return out
-
-# --- Inicialização de estados via Firebase ---
-if get_db("extras", None) is None:
-    set_db("extras", {"metodologia":[],"recursos":[],"criterios":[]})
-st.session_state.extras = get_db("extras", {"metodologia":[],"recursos":[],"criterios":[]})
-
-if "professores" not in st.session_state:
-    st.session_state.professores = get_db("professores", [])
-if "turmas" not in st.session_state:
-    st.session_state.turmas = get_db("turmas", {})
-if "horarios" not in st.session_state:
-    st.session_state.horarios = get_db("horarios", [])
-
-# --- Sidebar ---
-pages = [
-    "Cadastro de Professor","Cadastro de Turmas","Cadastro de Horário",
-    "Gerar Agenda e Plano","Cadastro Extras","Gerar Guia","Planejamento Bimestral"
-]
-for p in pages:
-    if st.sidebar.button(p, use_container_width=True):
-        st.session_state.page = p
 
 # --- Páginas ---
 if st.session_state.get('page') == "Cadastro de Professor":
