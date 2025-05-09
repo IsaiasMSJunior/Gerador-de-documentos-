@@ -17,17 +17,26 @@ from openpyxl.styles import PatternFill
 
 # --- Inicialização do Firebase ---
 # Carrega a chave de serviço do secrets.toml
-secret_key = None
+secret_key_raw = None
 if "firebase_key" in st.secrets:
-    secret_key = st.secrets["firebase_key"]
+    secret_key_raw = st.secrets["firebase_key"]
 elif "firebase" in st.secrets and "firebase_key" in st.secrets["firebase"]:
-    secret_key = st.secrets["firebase"]["firebase_key"]
+    secret_key_raw = st.secrets["firebase"]["firebase_key"]
 else:
     st.error("Chave de serviço do Firebase não encontrada em secrets do Streamlit Cloud.")
     st.stop()
 
-# Converte JSON em dict
-service_account_info = json.loads(secret_key)
+# Converte JSON em dict, ou usa diretamente se já for dict
+if isinstance(secret_key_raw, dict):
+    service_account_info = secret_key_raw
+else:
+    try:
+        service_account_info = json.loads(secret_key_raw)
+    except Exception as e:
+        st.error(f"Erro ao decodificar JSON da chave do Firebase: {e}")
+        st.text(secret_key_raw)
+        st.stop()
+
 cred = credentials.Certificate(service_account_info)
 
 # Carrega o databaseURL
